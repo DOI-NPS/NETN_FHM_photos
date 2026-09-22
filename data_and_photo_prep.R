@@ -172,3 +172,5 @@ map2(name_df$full_name[c(20, 21, 22, 23, 299, 314)], name_df$photo_name[c(20, 21
 name_df_miss <- name_df |> filter(grepl("ACAD_029|ACAD_057|ACAD_058|ACAD_059|ACAD_175", photo_name))
 map2(name_df_miss$full_name, name_df_miss$photo_name, ~process_image(.x, .y), .progress = T)
 
+name_df_miss2 <- name_df |> filter(grepl("WEFA_006|WEFA_007|WEFA_007|WEFA_009|WEFA_010", photo_name))
+map2(name_df_miss2$full_name, name_df_miss2$photo_name, ~process_image(.x, .y), .progress = T)
