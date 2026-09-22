@@ -1,0 +1,174 @@
+#----------------------------------
+# Script pulls in forest photopoints from server, resizes, adds border and title, and saves them as jpegs
+#----------------------------------
+# Note that because this is pulling 1,500+ images from the Z drive, this can be slow. If you have all
+# of the most recent cycle of photopoints locally on your machine, it can go a lot faster.
+
+#----- Libraries -----
+library(tidyverse)
+library(magick)
+library(stringi)
+library(forestNETN)
+
+server_add <- read.csv('../server.csv')[1,]
+importData(instance = "server", server = server_add)
+
+#----- Params updated every year -----
+NHPs <- c("MABI", "MIMA", "MORR", "ROVA", "SAGA", "SARA", "WEFA")
+from_ACAD = 2023
+to_ACAD = 2026
+from_NHP = 2023
+to_NHP = 2026
+
+#----- Compile data for the popups -----
+# combine ACAD and NHPs
+plots1 <- rbind(joinLocEvent(park = "ACAD", from = from_ACAD, to = to_ACAD, output = 'verbose', locType = "all"),
+                joinLocEvent(park = NHPs, from = from_NHP, to = to_NHP, output = 'verbose', locType = "all")) |> 
+  mutate(Physio = paste0(PhysiographySummary, "- ", PhysiographyLabel)) |> 
+  select(Plot_Name, Unit_Code = ParkUnit, Panel = PanelCode, Physio,  
+         Directions, Location_Notes = PlotNotes, SampleYear, Lat, Long, IsStuntedWoodland)
+
+trees <- rbind(joinTreeData(park = "ACAD", from = from_ACAD, to = to_ACAD, status = 'active', locType = "all"),
+               joinTreeData(park = NHPs, from = from_NHP, to = to_NHP, status = 'active', locType = "all"))
+
+table(trees$TreeStatusCode)
+live = c("AB", "AF", "AL", "AM", "AS", "RB", "RF", "RL", "RS")
+dead = c("DB", "DL", "DM", "DS")
+
+trees_sum <- trees |> 
+  mutate(status = case_when(TreeStatusCode %in% live ~ "live",
+                            TreeStatusCode %in% dead ~ "dead",
+                            TRUE ~ "X")) |> 
+  filter(!status %in% "X") |>
+  group_by(Plot_Name, SampleYear, status) |> 
+  summarize(Num_Stems = sum(num_stems), 
+            .groups = 'drop') |> 
+  pivot_wider(names_from = status, values_from = Num_Stems, values_fill = 0) |> 
+  select(Plot_Name, Num_Live_Trees = live, Num_Dead_Trees = dead)
+
+inv_shrubs <- rbind(joinMicroShrubData(park = "ACAD", from = from_ACAD, to = to_ACAD, 
+                                       speciesType = 'invasive', locType = 'all'),
+                    joinMicroShrubData(park = NHPs, from = from_NHP, to = to_NHP, 
+                                       speciesType = 'invasive', locType = 'all')) |> 
+  group_by(Plot_Name) |> summarize(Inv_Shrub_Cov = round(sum(shrub_avg_cov), 1))
+
+regen1 <- rbind(joinRegenData(park = "ACAD", from = from_ACAD, to = to_ACAD, locType = "all"),
+               joinRegenData(park = NHPs, from = from_NHP, to = to_NHP, locType = "all"))
+
+regen <- regen1 |> group_by(Plot_Name) |> summarize(Num_Seedlings = sum(seed_den)*3,
+                                                    Num_Saplings = sum(sap_den)*3
+                                                    )
+numspp1 <- rbind(sumSpeciesList(park = "ACAD", from = from_ACAD, to = to_ACAD, locType = "all"),
+                sumSpeciesList(park = NHPs, from = from_NHP, to = to_NHP, locType = "all")) 
+
+numspp <- numspp1 |> group_by(Plot_Name) |> summarize(Num_Quad_Species = sum(quad_avg_cov > 0),
+                                                      Num_Add_Species = sum(addspp_present > 0))
+
+dfs <- list(plots1, trees_sum, inv_shrubs, regen, numspp)
+comb <- reduce(dfs, left_join, by = "Plot_Name")
+comb[,12:ncol(comb)][is.na(comb[,12:ncol(comb)])] <- 0
+
+#----- Join sample data with photo info -----
+
+#----- Uncomment next 3 lines to remove previous set of photos -----
+# old_photos <- list.files("./www", pattern = "JPG$", full.names = T)
+# old_photos <- old_photos[!grepl("AH_small", old_photos)]
+# file.remove(old_photos)
+table(plots1$Unit_Code, plots1$Panel) # correct number of plots
+
+# update to full path from NETN server
+path <- c("./Forest_Health/5_Data/Photos/Photopoints/")
+
+path23 <- paste0(path, 2023)
+path24 <- paste0(path, 2024)
+path25 <- paste0(path, 2025)
+path26 <- paste0(path, 2026)
+
+full_names <- list.files(c(path23, path24, path25, path26), 
+                           pattern = 'JPG$|jpeg$', full.names = T, ignore.case = T)
+
+#full_names[1:10]
+name_df1 <- data.frame(full_name = full_names, 
+                       photo_name = 
+                         ifelse(grepl("JPG", full_names), 
+                           substr(full_names, nchar(full_names) - 23, nchar(full_names)),
+                           substr(full_names, nchar(full_names) - 24, nchar(full_names)))
+                       )
+
+#drops <- c("ID", "RN", "UC")
+name_df <- name_df1[!grepl("ID|RN|UC|QAQC", name_df1$photo_name),]
+
+photo_name_df <- #data.frame(photo_name)  |>  
+                 name_df |> 
+                 mutate(plot_name = substr(photo_name, 1, 8),
+                        scene = case_when(grepl("UR", photo_name) ~ "UR", 
+                                          grepl("BR", photo_name) ~ "BR",
+                                          grepl("BL", photo_name) ~ "BL",
+                                          grepl("UL", photo_name) ~ "UL"))  |>  
+                 arrange(plot_name, photo_name) |>  
+                 group_by(plot_name, scene) |>  
+                 summarise(photo_name = first(photo_name),
+                           .groups = 'drop')
+
+head(photo_name_df)
+head(photo_name_df)
+
+photo_name_wide <- photo_name_df  |>  pivot_wider(names_from = scene, values_from = photo_name) 
+photo_name_wide$Plot_Name <- sub("_", "-", photo_name_wide$plot_name)
+
+plots <- left_join(comb, photo_name_wide[,-1], by = "Plot_Name")
+head(plots)
+if(nrow(is.na(plots$BL)) > 0){warning("Some photos did not link properly to the dataset. Check that they 
+                                      are found on the Z drive and are formatted correctly.")}
+write.csv(plots, "./data/Plots.csv", row.names = FALSE)
+
+# Check for duplicate plot records (ie QAQC photopoints missing _QAQC in the file name)
+dups <- plots$Plot_Name[duplicated(plots$Plot_Name)]
+
+if(length(dups) > 0){
+  warning(paste0("There are ", length(unique(dups)), " duplicates in the plots data frame. Check plots: ", 
+                 paste0(unique(dups), collapse = ",")))}
+
+# Function to rename each photo based on its file name
+view_namer <- function(pname){
+  ifelse(grepl("UR", pname), paste0(" Upper Right "),
+  ifelse(grepl("BR", pname), paste0(" Bottom Right "),
+  ifelse(grepl("BL", pname), paste0(" Bottom Left "),
+  ifelse(grepl("UL", pname), paste0(" Upper Left "),
+  paste("unknown"))
+         )))
+}
+
+# Function to resize and label each photo
+process_image <- function(import_name, export_name){
+  title <- view_namer(pname = export_name)
+  img <- image_read(import_name)
+  img2 <- image_border(img, 'black','6x6')
+  img3 <- image_scale(img2, 'X600')
+  img4 <- image_annotate(img3, 
+                         paste(title), 
+                         size = 16, 
+                         color = 'black',
+                         boxcolor = 'white', 
+                         location = "+10+10",
+                         degrees = 0)
+  image_write(img4, format='jpeg', paste0("./www/", export_name))
+}
+
+# test on 1 photo
+# process_image(import_name = full_names[40], export_name = photo_name[40])
+
+# Run through all photos. Can break into even smaller chunks of bogs down computer too much
+num_photos <- nrow(name_df) #1408
+head(name_df)
+
+map2(name_df$full_name[1:500], name_df$photo_name[1:500], ~process_image(.x,.y), .progress = T)
+map2(name_df$full_name[501:1000], name_df$photo_name[501:1000], ~process_image(.x,.y), .progress = T)
+map2(name_df$full_name[1001:num_photos], name_df$photo_name[1001:num_photos], ~process_image(.x,.y), .progress = T)
+map2(name_df$full_name[c(20, 21, 22, 23, 299, 314)], name_df$photo_name[c(20, 21, 22, 23, 299, 314)], 
+     ~process_image(.x,.y), .progress = T)
+
+# Plots missed in the initial roundup
+name_df_miss <- name_df |> filter(grepl("ACAD_029|ACAD_057|ACAD_058|ACAD_059|ACAD_175", photo_name))
+map2(name_df_miss$full_name, name_df_miss$photo_name, ~process_image(.x, .y), .progress = T)
+
