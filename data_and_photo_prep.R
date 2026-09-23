@@ -77,7 +77,7 @@ comb[,12:ncol(comb)][is.na(comb[,12:ncol(comb)])] <- 0
 table(plots1$Unit_Code, plots1$Panel) # correct number of plots
 
 # update to full path from NETN server
-path <- c("./Forest_Health/5_Data/Photos/Photopoints/")
+path <- c("./Monitoring/Forest_Health/5_Data/Photos/Photopoints/")
 
 path23 <- paste0(path, 2023)
 path24 <- paste0(path, 2024)
@@ -118,7 +118,9 @@ photo_name_wide$Plot_Name <- sub("_", "-", photo_name_wide$plot_name)
 
 plots <- left_join(comb, photo_name_wide[,-1], by = "Plot_Name")
 head(plots)
-if(nrow(is.na(plots$BL)) > 0){warning("Some photos did not link properly to the dataset. Check that they 
+missing_plots <- plots |> filter(is.na(BL) | is.na(BR) | is.na(UL) | is.na(UR))
+
+if(nrow(missing_plots) > 0){warning("Some photos did not link properly to the dataset. Check that they 
                                       are found on the Z drive and are formatted correctly.")}
 write.csv(plots, "./data/Plots.csv", row.names = FALSE)
 
@@ -174,3 +176,7 @@ map2(name_df_miss$full_name, name_df_miss$photo_name, ~process_image(.x, .y), .p
 
 name_df_miss2 <- name_df |> filter(grepl("WEFA_006|WEFA_007|WEFA_007|WEFA_009|WEFA_010", photo_name))
 map2(name_df_miss2$full_name, name_df_miss2$photo_name, ~process_image(.x, .y), .progress = T)
+
+name_df_miss3 <- name_df |> filter(grepl("WEFA_008", photo_name))
+map2(name_df_miss3$full_name, name_df_miss3$photo_name, ~process_image(.x, .y), .progress = T)
+
